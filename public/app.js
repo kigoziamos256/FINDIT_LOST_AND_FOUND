@@ -156,7 +156,7 @@ function renderHeader() {
 function renderFooter() {
   return h('footer', { class: 'footer' },
     h('p', {}, '💜 Built with care for the community · FindIt Lost & Found'),
-    h('p', { class: 'small' }, 'Distributed Systems Project · BSE 4103 / BCS 3107')
+    h('p', { class: 'small' }, 'Distributed Systems Project')
   );
 }
 
