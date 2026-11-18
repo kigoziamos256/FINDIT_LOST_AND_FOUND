@@ -184,7 +184,7 @@ All security features below are implemented in the codebase and enforce the mark
 - No rate limiting on `/auth/*` — a production deployment should add `express-rate-limit` or an Nginx `limit_req` zone.
 - No email verification or 2FA.
 - Images are stored in the DB, not an object store — a presigned-URL flow to S3 / R2 would be a ~40-line swap in `routes.js`.
-
+- Physical handover happens **after** approval: both parties receive each other's contact details (finder's name + email + pickup location, claimant's name + email + the phone/email they entered). Contact info is exposed via a **dedicated authorization-gated endpoint** (`GET /api/items/:id/contact`) that only returns data to the finder, an approved claimant, or the admin.
 ---
 
 ## c) Coordination and consistency
