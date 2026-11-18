@@ -156,7 +156,7 @@ function renderHeader() {
 function renderFooter() {
   return h('footer', { class: 'footer' },
     h('p', {}, '💜 Built with care for the community · FindIt Lost & Found'),
-    h('p', { class: 'small' }, 'Distributed Systems Project')
+    h('p', { class: 'small' }, 'Distributed Systems Project · BSE 4103 / BCS 3107')
   );
 }
 
@@ -164,7 +164,6 @@ function renderFooter() {
 // Home
 // =====================================================
 async function renderHome(main) {
-  // Hero
   const hero = h('section', { class: 'hero' });
   hero.appendChild(h('span', { class: 'hero-eyebrow' }, '✨ Auto-matching lost & found'));
   hero.appendChild(h('h1', {}, 'Lost something? ',
@@ -186,7 +185,6 @@ async function renderHome(main) {
   hero.appendChild(heroActions);
   main.appendChild(hero);
 
-  // Fetch items
   let items = [];
   try {
     const params = new URLSearchParams();
@@ -199,7 +197,6 @@ async function renderHome(main) {
     return;
   }
 
-  // Stats
   const totalLost  = items.filter(i => i.type === 'LOST').length;
   const totalFound = items.filter(i => i.type === 'FOUND').length;
   const resolved   = items.filter(i => i.status === 'RESOLVED').length;
@@ -217,22 +214,16 @@ async function renderHome(main) {
   main.appendChild(stats);
 
   const isUnfiltered = !state.filters.type && !state.filters.category && !state.filters.q;
-
-  // Photo strip
-  if (isUnfiltered && items.length > 0) {
-    main.appendChild(renderPhotoStrip(items.slice(0, 10)));
-  }
-
-  // How it works
+  if (isUnfiltered && items.length > 0) main.appendChild(renderPhotoStrip(items.slice(0, 10)));
   if (isUnfiltered) {
     main.appendChild(h('div', { class: 'section-title' },
       h('h2', {}, 'How it works'),
       h('span', { class: 'count' }, 'Three steps, one happy reunion')));
     const grid = h('div', { class: 'how' });
     [
-      { icon: '📝', title: 'Report it',       text: 'Post what you lost or found. Add a photo and a few details — takes 30 seconds.' },
-      { icon: '🤖', title: 'We auto-match',   text: 'Our background worker scans new reports and scores potential matches on category, text, time, and location.' },
-      { icon: '🎉', title: 'You get reunited', text: 'Get notified the moment something matches. Claim it, an admin approves, and it’s back where it belongs.' },
+      { icon: '📝', title: 'Report it',        text: 'Post what you lost or found. Add a photo and a few details — takes 30 seconds.' },
+      { icon: '🤖', title: 'We auto-match',    text: 'Our background worker scans new reports and scores potential matches on category, text, time, and location.' },
+      { icon: '🤝', title: 'Get reunited',     text: 'Get notified when something matches. Claim it, an admin approves, and you receive each other’s contact details.' },
     ].forEach(c => {
       grid.appendChild(h('div', { class: 'how-card' },
         h('div', { class: 'how-icon' }, c.icon),
@@ -242,7 +233,6 @@ async function renderHome(main) {
     main.appendChild(grid);
   }
 
-  // Controls
   const controls = h('div', { class: 'controls' });
   const tabs = h('div', { class: 'tabs' });
   ['', 'LOST', 'FOUND'].forEach(t => {
@@ -274,7 +264,6 @@ async function renderHome(main) {
   controls.appendChild(search);
   main.appendChild(controls);
 
-  // Grid
   main.appendChild(h('div', { class: 'section-title' },
     h('h2', {}, isUnfiltered ? 'Recent reports' : 'Results'),
     h('span', { class: 'count' }, `${items.length} item${items.length === 1 ? '' : 's'}`)));
@@ -290,9 +279,6 @@ async function renderHome(main) {
   }
 }
 
-// =====================================================
-// Photo strip (carousel)
-// =====================================================
 function renderPhotoStrip(items) {
   const section = h('section', { class: 'photo-strip-section' });
   section.appendChild(h('div', { class: 'strip-head' },
@@ -300,7 +286,6 @@ function renderPhotoStrip(items) {
     h('span', { class: 'strip-sub' }, 'Hover to pause · click to open')));
   const viewport = h('div', { class: 'strip-viewport' });
   const track = h('div', { class: 'strip-track' });
-  // Duplicate so the marquee loops seamlessly
   [...items, ...items].forEach(it => track.appendChild(stripCard(it)));
   viewport.appendChild(track);
   section.appendChild(viewport);
@@ -312,8 +297,7 @@ function stripCard(it) {
     onclick: () => { state.view = 'item'; state.itemId = it.id; render(); }});
   const media = h('div', {
     class: 'strip-media',
-    style: it.image_data
-      ? 'background:#f1f5f9'
+    style: it.image_data ? 'background:#f1f5f9'
       : `background:${gradientForCategory(it.category)};color:#fff`
   });
   if (it.image_data) media.appendChild(h('img', { src: it.image_data, alt: it.title }));
@@ -324,21 +308,16 @@ function stripCard(it) {
   card.appendChild(media);
   card.appendChild(h('div', { class: 'strip-info' },
     h('h4', {}, it.title),
-    h('div', { class: 'meta' }, it.category + (it.location ? ' · ' + it.location : ''))
-  ));
+    h('div', { class: 'meta' }, it.category + (it.location ? ' · ' + it.location : ''))));
   return card;
 }
 
-// =====================================================
-// Item card (grid)
-// =====================================================
 function itemCard(it) {
   const card = h('article', { class: 'item-card card',
     onclick: () => { state.view = 'item'; state.itemId = it.id; render(); }});
   const media = h('div', {
     class: 'item-media',
-    style: it.image_data
-      ? 'background:#f1f5f9'
+    style: it.image_data ? 'background:#f1f5f9'
       : `background:${gradientForCategory(it.category)};color:#fff`
   });
   if (it.image_data) media.appendChild(h('img', { src: it.image_data, alt: it.title }));
@@ -347,8 +326,7 @@ function itemCard(it) {
   badgeRow.appendChild(h('span', {
     class: `tag tag-float ${it.type === 'LOST' ? 'tag-lost' : 'tag-found'}`
   }, it.type));
-  badgeRow.appendChild(h('span', { class: 'tag tag-status' },
-    it.status.replace('_', ' ')));
+  badgeRow.appendChild(h('span', { class: 'tag tag-status' }, it.status.replace('_', ' ')));
   media.appendChild(badgeRow);
   card.appendChild(media);
   const body = h('div', { class: 'item-body' });
@@ -410,13 +388,14 @@ function renderAuth(main, mode) {
 }
 
 // =====================================================
-// Report
+// Report an item
 // =====================================================
 function renderReport(main) {
   if (!state.user) { state.view = 'login'; return render(); }
   const card = h('div', { class: 'card' });
   card.appendChild(h('h2', {}, 'Report an item'));
   const form = h('form', { class: 'form' });
+
   const typeRow = h('div', { class: 'radio-row' });
   ['LOST', 'FOUND'].forEach(t => {
     const wrap = h('label', { class: 'radio-pill' });
@@ -425,23 +404,43 @@ function renderReport(main) {
     typeRow.appendChild(wrap);
   });
   form.appendChild(typeRow);
+
   form.appendChild(h('label', {}, 'Title',
     h('input', { class: 'input', name: 'title', required: true, maxlength: 120,
       placeholder: 'e.g. Black iPhone 13 with cracked screen' })));
+
   form.appendChild(h('label', {}, 'Description',
     h('textarea', { class: 'input', name: 'description', rows: 4, maxlength: 2000,
       placeholder: 'Color, distinguishing marks, contents, etc.' })));
+
   const cat = h('select', { class: 'input', name: 'category', required: true });
   cat.appendChild(h('option', { value: '' }, 'Select category…'));
   CATEGORIES.forEach(c => cat.appendChild(h('option', { value: c }, c)));
   form.appendChild(h('label', {}, 'Category', cat));
-  form.appendChild(h('label', {}, 'Location',
+
+  form.appendChild(h('label', {}, 'Location (where it was lost / found)',
     h('input', { class: 'input', name: 'location', maxlength: 120,
       placeholder: 'e.g. Main Library, 2nd floor' })));
+
+  // NEW: pickup location (only shown when type = FOUND)
+  const pickupField = h('label', { style: 'display:none' },
+    '🏢 Pickup location (where you will hand the item over)',
+    h('input', { class: 'input', name: 'pickup_location', maxlength: 200,
+      placeholder: 'e.g. Campus Security Office, Room 4, Mon–Fri 9am–5pm' }));
+  form.appendChild(pickupField);
+  const togglePickup = () => {
+    const checked = form.querySelector('input[name="type"]:checked');
+    pickupField.style.display = (checked && checked.value === 'FOUND') ? 'flex' : 'none';
+  };
+  form.querySelectorAll('input[name="type"]').forEach(r => r.addEventListener('change', togglePickup));
+  togglePickup();
+
   form.appendChild(h('label', {}, 'Photo (optional, max 5 MB)',
     h('input', { class: 'input', type: 'file', name: 'photo', accept: 'image/*' })));
+
   const submit = h('button', { class: 'btn btn-primary btn-block', type: 'submit' }, 'Submit report');
   form.appendChild(submit);
+
   form.onsubmit = async (e) => {
     e.preventDefault();
     submit.disabled = true; submit.textContent = 'Uploading…';
@@ -459,6 +458,7 @@ function renderReport(main) {
         description: fd.get('description') || '',
         category: fd.get('category'),
         location: fd.get('location') || '',
+        pickup_location: fd.get('pickup_location') || '',
         image_data,
       };
       const item = await api('/items', { method: 'POST', body: JSON.stringify(body) });
@@ -498,22 +498,87 @@ async function renderItem(main, id) {
     if (item.image_data) card.appendChild(h('img', { class: 'item-img-large', src: item.image_data }));
     card.appendChild(h('p', {}, item.description || 'No description provided.'));
     card.appendChild(h('p', { class: 'muted' }, '📁 ' + item.category + ' · 📍 ' + (item.location || '—')));
+    if (item.type === 'FOUND' && item.pickup_location) {
+      card.appendChild(h('p', { class: 'muted' }, '🏢 Pickup: ' + item.pickup_location));
+    }
     card.appendChild(h('p', { class: 'muted small' },
       'Reported by ' + item.reporter_name + ' · ' + new Date(item.created_at).toLocaleString()));
+
+    // ---------- Claim form (replaces the single-click button) ----------
     if (state.user && item.type === 'FOUND' &&
         ['OPEN', 'MATCHED'].includes(item.status) &&
         item.user_id !== state.user.id) {
-      const claimBtn = h('button', { class: 'btn btn-primary mt' }, 'Claim this item');
-      claimBtn.onclick = async () => {
+      card.appendChild(h('h3', { class: 'mt' }, '📩 Claim this item'));
+
+      const claimForm = h('form', { class: 'form' });
+      claimForm.appendChild(h('label', {}, 'Your phone or email for pickup *',
+        h('input', {
+          class: 'input', name: 'contact_info', required: true, maxlength: 200,
+          placeholder: 'e.g. +256 700 123 456 or jane@example.com'
+        })));
+      claimForm.appendChild(h('label', {}, 'Message to the finder (optional)',
+        h('textarea', {
+          class: 'input', name: 'message', rows: 3, maxlength: 500,
+          placeholder: 'e.g. It has a blue sticker with my initials on the back.'
+        })));
+      const claimBtn = h('button', { class: 'btn btn-primary', type: 'submit' }, 'Submit claim');
+      claimForm.appendChild(claimBtn);
+
+      claimForm.onsubmit = async (e) => {
+        e.preventDefault();
+        claimBtn.disabled = true; claimBtn.textContent = 'Submitting…';
         try {
+          const fd = new FormData(claimForm);
           await api(`/items/${item.id}/claims`, {
-            method: 'POST', body: JSON.stringify({ message: 'This is mine.' })});
+            method: 'POST',
+            body: JSON.stringify({
+              contact_info: fd.get('contact_info'),
+              message: fd.get('message') || '',
+            }),
+          });
           toast('Claim submitted — an admin will review it shortly.', 'success');
           await render();
-        } catch (e) { toast(e.message, 'error'); }
+        } catch (e) {
+          toast(e.message, 'error');
+          claimBtn.disabled = false; claimBtn.textContent = 'Submit claim';
+        }
       };
-      card.appendChild(claimBtn);
+      card.appendChild(claimForm);
+      card.appendChild(h('p', { class: 'muted small' },
+        '🔒 Your contact details are only shared with the finder after an admin approves your claim.'));
     }
+
+    // ---------- Contact exchange card (post-approval) ----------
+    const shouldTryContact = state.user && (
+      item.user_id === state.user.id ||
+      state.user.role === 'admin' ||
+      item.status === 'RESOLVED'
+    );
+    if (shouldTryContact) {
+      try {
+        const contact = await api(`/items/${id}/contact`);
+        const cx = h('div', { class: 'card mt', style: 'background:#f0fdf4;border-color:#bbf7d0' });
+        cx.appendChild(h('h3', { style: 'margin-top:0' }, '🤝 Get in touch'));
+        cx.appendChild(h('p', { class: 'small muted' },
+          'The claim has been approved. Please coordinate pickup between yourselves.'));
+        if (contact.pickup_location) {
+          cx.appendChild(h('p', {}, '🏢 Pickup location: ' + contact.pickup_location));
+        }
+        cx.appendChild(h('p', {},
+          '👤 Finder: ' + contact.finder.name + ' · ' + contact.finder.email));
+        if (contact.claimant) {
+          cx.appendChild(h('p', {},
+            '🙋 Claimant: ' + contact.claimant.name + ' · ' + contact.claimant.email));
+          if (contact.claimant.contact_info) {
+            cx.appendChild(h('p', {}, '📞 Claimant contact: ' + contact.claimant.contact_info));
+          }
+        }
+        card.appendChild(cx);
+      } catch {
+        // Not authorized — silently skip
+      }
+    }
+
     if (matches.length) {
       card.appendChild(h('h3', { class: 'mt' }, `🔗 Possible matches (${matches.length})`));
       matches.forEach(m => {
@@ -585,6 +650,9 @@ async function renderClaims(main) {
       }
       info.appendChild(h('p', { class: 'muted small' },
         'by ' + c.claimant_name + ' · ' + new Date(c.created_at).toLocaleString()));
+      if (c.contact_info) {
+        info.appendChild(h('p', { class: 'small' }, '📞 ' + c.contact_info));
+      }
       info.appendChild(h('p', {}, c.message || ''));
       row.appendChild(info);
       const actions = h('div', { class: 'claim-actions' });
@@ -593,7 +661,7 @@ async function renderClaims(main) {
         approve.onclick = async () => {
           try {
             await api('/claims/' + c.id, { method: 'PATCH', body: JSON.stringify({ status: 'APPROVED' })});
-            toast('Claim approved', 'success');
+            toast('Claim approved — both parties notified', 'success');
             render();
           } catch (e) { toast(e.message, 'error'); }
         };
