@@ -102,7 +102,8 @@ REST over HTTP/JSON. All endpoints are under `/api`. Auth is JWT Bearer.
 | GET | `/api/items/:id` | – | Item detail |
 | POST | `/api/items` | ✔ | Create report + enqueue matching job |
 | GET | `/api/items/:id/matches` | – | List matches for an item |
-| POST | `/api/items/:id/claims` | ✔ | Claim a FOUND item |
+| GET | `/api/items/:id/contact` | ✔ | Contact exchange (finder, approved claimant, admin only) |
+| POST | `/api/items/:id/claims` | ✔ | Claim a FOUND item (requires `contact_info`) |
 | GET | `/api/claims` | ✔ | Admin: all claims; user: own |
 | PATCH | `/api/claims/:id` | ✔ admin | Approve / reject |
 | GET | `/api/notifications` | ✔ | List notifications |
