@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS items (
   description TEXT NOT NULL DEFAULT '',
   category TEXT NOT NULL,
   location TEXT NOT NULL DEFAULT '',
+  pickup_location TEXT NOT NULL DEFAULT '',
   image_data TEXT,
   status TEXT NOT NULL DEFAULT 'OPEN'
     CHECK (status IN ('OPEN','MATCHED','CLAIM_PENDING','RESOLVED','CLOSED')),
@@ -50,6 +51,7 @@ CREATE TABLE IF NOT EXISTS claims (
   item_id UUID NOT NULL REFERENCES items(id) ON DELETE CASCADE,
   claimant_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   message TEXT NOT NULL DEFAULT '',
+  contact_info TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING','APPROVED','REJECTED')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (item_id, claimant_id)
@@ -73,3 +75,10 @@ CREATE TABLE IF NOT EXISTS jobs (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_pending ON jobs(status, run_after);
+
+-- ============================================================
+-- Migrations for existing databases
+-- Idempotent — safe to run on every deploy
+-- ============================================================
+ALTER TABLE items  ADD COLUMN IF NOT EXISTS pickup_location TEXT NOT NULL DEFAULT '';
+ALTER TABLE claims ADD COLUMN IF NOT EXISTS contact_info    TEXT NOT NULL DEFAULT '';
