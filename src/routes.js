@@ -35,7 +35,6 @@ router.post('/auth/register', async (req, res) => {
   if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0].message });
   const { email, password, name } = parsed.data;
 
-  // First ever user becomes admin so the demo always has one.
   const { rows: [{ count }] } = await pool.query('SELECT count(*)::int AS count FROM users');
   const role = count === 0 ? 'admin' : 'user';
 
@@ -132,6 +131,7 @@ router.post('/items', requireAuth, async (req, res) => {
     description: z.string().max(2000).default(''),
     category: z.string().min(1).max(40),
     location: z.string().max(120).default(''),
+    pickup_location: z.string().max(200).default(''),
     image_data: z.string().max(7_500_000).optional(),
   });
   const parsed = schema.safeParse(req.body);
@@ -139,12 +139,11 @@ router.post('/items', requireAuth, async (req, res) => {
   const d = parsed.data;
 
   const { rows: [item] } = await pool.query(
-    `INSERT INTO items (user_id, type, title, description, category, location, image_data)
-     VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-    [req.user.sub, d.type, d.title, d.description, d.category, d.location, d.image_data || null]
+    `INSERT INTO items (user_id, type, title, description, category, location, pickup_location, image_data)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+    [req.user.sub, d.type, d.title, d.description, d.category, d.location, d.pickup_location, d.image_data || null]
   );
 
-  // Enqueue an asynchronous matching job — this is what makes the API fast.
   await pool.query(
     `INSERT INTO jobs (kind, payload) VALUES ('match_item', $1)`,
     [JSON.stringify({ item_id: item.id })]
@@ -169,11 +168,57 @@ router.get('/items/:id/matches', async (req, res) => {
   res.json(rows);
 });
 
+// ---------- Contact exchange (Option C) ----------
+// Only authorized parties can read each other's contact info:
+//   - the finder of this item
+//   - an APPROVED claimant
+//   - the admin
+router.get('/items/:id/contact', requireAuth, async (req, res) => {
+  const itemId = req.params.id;
+  const { rows: [item] } = await pool.query(
+    `SELECT i.*, u.email AS finder_email, u.name AS finder_name
+     FROM items i JOIN users u ON u.id = i.user_id
+     WHERE i.id = $1`,
+    [itemId]
+  );
+  if (!item) return res.status(404).json({ error: 'Item not found' });
+
+  const isFinder = item.user_id === req.user.sub;
+  const isAdmin = req.user.role === 'admin';
+
+  const { rows: [approved] } = await pool.query(
+    `SELECT c.*, u.email AS claimant_email, u.name AS claimant_name
+     FROM claims c JOIN users u ON u.id = c.claimant_id
+     WHERE c.item_id = $1 AND c.status = 'APPROVED'`,
+    [itemId]
+  );
+  const isApprovedClaimant = approved && approved.claimant_id === req.user.sub;
+
+  if (!isFinder && !isAdmin && !isApprovedClaimant) {
+    return res.status(403).json({ error: 'Contact info is only visible after a claim is approved' });
+  }
+
+  res.json({
+    pickup_location: item.pickup_location || '',
+    finder: { name: item.finder_name, email: item.finder_email },
+    claimant: approved ? {
+      name: approved.claimant_name,
+      email: approved.claimant_email,
+      contact_info: approved.contact_info,
+    } : null,
+  });
+});
+
 // =====================================================
 // CLAIMS
 // =====================================================
 router.post('/items/:id/claims', requireAuth, async (req, res) => {
-  const { message } = req.body || {};
+  const { message, contact_info } = req.body || {};
+  const contactTrimmed = String(contact_info || '').trim();
+  if (!contactTrimmed) {
+    return res.status(400).json({ error: 'Contact info is required so the finder can reach you' });
+  }
+
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -186,11 +231,11 @@ router.post('/items/:id/claims', requireAuth, async (req, res) => {
       throw Object.assign(new Error('You cannot claim your own found item'), { status: 400 });
 
     const { rows: [claim] } = await client.query(
-      `INSERT INTO claims (item_id, claimant_id, message)
-       VALUES ($1,$2,$3)
+      `INSERT INTO claims (item_id, claimant_id, message, contact_info)
+       VALUES ($1,$2,$3,$4)
        ON CONFLICT (item_id, claimant_id) DO NOTHING
        RETURNING *`,
-      [item.id, req.user.sub, message || '']
+      [item.id, req.user.sub, message || '', contactTrimmed.slice(0, 200)]
     );
     if (!claim) throw Object.assign(new Error('You already claimed this item'), { status: 409 });
 
@@ -245,6 +290,8 @@ router.patch('/claims/:id', requireAuth, requireAdmin, async (req, res) => {
     await client.query(`UPDATE claims SET status=$1 WHERE id=$2`, [status, claim.id]);
 
     const { rows: [item] } = await client.query('SELECT * FROM items WHERE id=$1', [claim.item_id]);
+    const { rows: [finder] } = await client.query('SELECT name, email FROM users WHERE id=$1', [item.user_id]);
+    const { rows: [claimant] } = await client.query('SELECT name, email FROM users WHERE id=$1', [claim.claimant_id]);
 
     if (status === 'APPROVED') {
       await client.query(`UPDATE items SET status='RESOLVED' WHERE id=$1`, [claim.item_id]);
@@ -253,9 +300,23 @@ router.patch('/claims/:id', requireAuth, requireAdmin, async (req, res) => {
          WHERE item_id=$1 AND id<>$2 AND status='PENDING'`,
         [claim.item_id, claim.id]
       );
+
+      // Claimant: get finder's contact + pickup instructions
+      let claimantMsg = `🎉 Your claim on "${item.title}" was approved!`;
+      claimantMsg += ` Contact ${finder.name} at ${finder.email}.`;
+      if (item.pickup_location) claimantMsg += ` Pickup: ${item.pickup_location}.`;
       await client.query(
         `INSERT INTO notifications (user_id, message) VALUES ($1,$2)`,
-        [claim.claimant_id, `🎉 Your claim on "${item.title}" was approved!`]
+        [claim.claimant_id, claimantMsg]
+      );
+
+      // Finder: get claimant's contact
+      let finderMsg = `✅ You approved the claim on "${item.title}". The claimant is ${claimant.name} (${claimant.email}).`;
+      if (claim.contact_info) finderMsg += ` Their contact: ${claim.contact_info}.`;
+      finderMsg += ` Item is now RESOLVED — please arrange handover.`;
+      await client.query(
+        `INSERT INTO notifications (user_id, message) VALUES ($1,$2)`,
+        [item.user_id, finderMsg]
       );
     } else {
       await client.query(
@@ -266,12 +327,11 @@ router.patch('/claims/:id', requireAuth, requireAdmin, async (req, res) => {
         `INSERT INTO notifications (user_id, message) VALUES ($1,$2)`,
         [claim.claimant_id, `Your claim on "${item.title}" was rejected.`]
       );
+      await client.query(
+        `INSERT INTO notifications (user_id, message) VALUES ($1,$2)`,
+        [item.user_id, `You rejected a claim on your item "${item.title}". The item is available again.`]
+      );
     }
-
-    await client.query(
-      `INSERT INTO notifications (user_id, message) VALUES ($1,$2)`,
-      [item.user_id, `Claim ${status.toLowerCase()} on your item "${item.title}"`]
-    );
 
     await client.query('COMMIT');
     res.json({ ok: true });
