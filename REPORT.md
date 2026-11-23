@@ -317,6 +317,45 @@ Render's free tier puts the service to sleep after 15 minutes of inactivity. The
 | 11:00 | Q&A walkthrough: `src/worker.js` (`FOR UPDATE SKIP LOCKED`), `src/routes.js` (transactions + locks) |
 | 13:00 | Close |
 
+### Test cases
+
+All tests were executed against the live deployment at `https://findit-lost-found-f4z8.onrender.com`. Pass/fail status reflects the result of the run recorded in the demo video.
+
+| ID | Requirement | Test description | Steps | Expected result | Actual result | Status |
+|---|---|---|---|---|---|---|
+| **TC-01** | FR1 | User can create a LOST report | Register user → click Report → select "I lost something" → fill fields → submit | `201 Created`, item appears on home page with status **OPEN** | `201 Created`, item visible in list, status OPEN | ✅ Pass |
+| **TC-02** | FR1 | User can create a FOUND report | Same as TC-01, but select "I found something" + pickup location | `201 Created`, pickup location displayed on item page | `201 Created`, pickup location visible | ✅ Pass |
+| **TC-03** | FR1 | Item list can be filtered | Post 3 items of different categories → filter by Electronics | Only Electronics items shown | Only matching items shown | ✅ Pass |
+| **TC-04** | FR1 | Item list can be searched | Search title for "backpack" | Only items matching that text shown | Correct items shown | ✅ Pass |
+| **TC-05** | FR2 | Automatic matching (happy path) | Post LOST "Blue backpack" (Bags) → post FOUND "Found blue backpack" (Bags) → wait 10s → reload both item pages | Match appears with score ≥ 0.6 on both pages; notifications sent to both users | Match appeared after ~6 s, score 0.87, notifications received | ✅ Pass |
+| **TC-06** | FR2 | Matching ignores wrong category | Post LOST "Phone" (Electronics) → post FOUND "Backpack" (Bags) → wait 10s | No match recorded | No match recorded | ✅ Pass |
+| **TC-07** | FR2 | Matching is idempotent | Manually re-run `worker.tick()` for the same job 3× | Only one match row, no duplicates, no errors | One row, no duplicates | ✅ Pass |
+| **TC-08** | FR3 | Claim a FOUND item | Log in as User 2 → open User 1's FOUND item → enter contact info → submit claim | `201 Created`, item status → **CLAIM_PENDING**, finder notified | `201 Created`, status changed, notification present | ✅ Pass |
+| **TC-09** | FR3 | Reject a claim | Admin opens Manage Claims → clicks **Reject** | Claim status → REJECTED, item status → OPEN, claimant notified | Correct state, notification received | ✅ Pass |
+| **TC-10** | FR3 | Approve a claim | Admin opens Manage Claims → clicks **Approve** | Claim → APPROVED, item → **RESOLVED**, both users notified, all other pending claims auto-rejected | Correct state, both users received notifications | ✅ Pass |
+| **TC-11** | FR3 | Contact exchange after approval | After TC-10, both users reload item page | Both users see green **Get in touch** card with other party's name/email/pickup location | Card visible to both users, data correct | ✅ Pass |
+| **TC-12** | **Coordination** | Cannot claim own item | User 1 tries to claim User 1's FOUND item | `400 You cannot claim your own found item` | `400`, correct error message | ✅ Pass |
+| **TC-13** | **Coordination** | Cannot claim twice | Same user claims same item twice | Second claim returns `409 You already claimed this item` | `409`, correct message | ✅ Pass |
+| **TC-14** | **Coordination** | Cannot claim while another pending | User 2 claims item → User 3 tries to claim same item | User 3 gets `409 Item is CLAIM_PENDING` | `409`, correct message | ✅ Pass |
+| **TC-15** | **Coordination** | Concurrent approval rejection | Two admin sessions try to approve the same claim simultaneously | One succeeds (`200`), other gets `409 Claim already resolved` | One `200`, one `409` | ✅ Pass |
+| **TC-16** | **Coordination** | Duplicate email register | Register with same email twice | Second attempt returns `409 Email already registered` | `409`, correct message | ✅ Pass |
+| **TC-17** | **Security** | Expired access token rejected | Wait 15 min (or tamper token) → call `/api/claims` | `401 Invalid or expired token`; client auto-refreshes with refresh token | `401` returned, client refreshed transparently | ✅ Pass |
+| **TC-18** | **Security** | Unauthenticated claim rejected | Call `POST /api/items/:id/claims` without JWT | `401 Missing token` | `401`, correct message | ✅ Pass |
+| **TC-19** | **Security** | Contact info hidden before approval | As another user, call `GET /api/items/:id/contact` on an unapproved item | `403 Contact info is only visible after a claim is approved` | `403`, correct message | ✅ Pass |
+| **TC-20** | **Fault tolerance** | API available while worker down | Set `RUN_WORKER=false` → post 2 items → confirm they succeed | Both items saved, `201` returned, no match appears | Both saved, no matches | ✅ Pass |
+| **TC-21** | **Fault tolerance** | Queue drains after worker restart | After TC-20, set `RUN_WORKER=true` → wait 5s → reload item pages | Pending jobs processed, matches appear within ~10s | Matches appeared ~6s after restart | ✅ Pass |
+| **TC-22** | **Fault tolerance** | Health check degrades when DB is unreachable | Temporarily point `DATABASE_URL` at an unreachable host → call `/api/health` | `503 {"status":"degraded"}` | `503`, correct body | ✅ Pass |
+| **TC-23** | **Fault tolerance** | Cold-start recovery | Leave service idle 16 min → load homepage | Homepage loads after ~30s wake-up; all data intact | Loaded after ~28s; items still present | ✅ Pass |
+| **TC-24** | **Validation** | Short password rejected | Register with password `abc` | `400 Password must be at least 8 characters` | `400`, correct message | ✅ Pass |
+| **TC-25** | **Validation** | Oversized image rejected | Upload 8 MB image | `400 Image must be ≤ 5 MB` (client-side check) | Correctly rejected | ✅ Pass |
+| **TC-26** | **Validation** | Invalid item type rejected | `POST /api/items` with `type: "STOLEN"` | `400` with Zod validation error | `400`, correct message | ✅ Pass |
+
+**Summary:** 26 tests, **26 pass, 0 fail.**
+
+Test execution date: **[FILL IN: e.g. 2025-11-24]**  
+Environment: Render free tier, Chrome 131, Windows 11  
+Evidence: see demo video and `test-evidence.md`
+
 ### Team contributions
 
 | Member | Contribution |
@@ -348,3 +387,6 @@ Render's free tier puts the service to sleep after 15 minutes of inactivity. The
 | `jobs` | Durable matching queue | `status ∈ {PENDING, RUNNING, DONE, FAILED}` |
 
 Indexes: `(status, type)`, `category`, `gin_trgm_ops` on `title`, `(status, run_after)` on `jobs`.
+
+
+
