@@ -4,7 +4,7 @@
 **Team:** Magall Moritz (24/2/306/DJ/082), Kigozi Amos (23/2/306/D/594)  
 **Live deployment:** https://findit-lost-found-f4z8.onrender.com  
 **Source code:** https://github.com/kigoziamos256/FINDIT_LOST_AND_FOUND  
-**Demo video:** _[YouTube / Google Drive link — to be added]_  
+**Demo video:** _[(https://youtu.be/1WElMVKRzf8)]_  
 **Date:** November 2025
 
 ---
