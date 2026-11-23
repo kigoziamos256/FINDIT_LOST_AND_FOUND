@@ -309,7 +309,6 @@ Two approaches were used to measure performance on the live deployment:
 1. **Browser network timing** — DevTools Network panel timed `POST /api/items` for 10 sequential reports from a single client.
 2. **Load generation** — the included `scripts/bench.js` script was used to submit N concurrent clients × 10 reports each. It runs a second wave with 20 clients to observe degradation.
 
-Raw evidence is preserved in [`benchmark-evidence.md`](benchmark-evidence.md).
 
 ### Results — cold start
 
@@ -327,7 +326,6 @@ Render's free tier puts the service to sleep after 15 minutes of inactivity. The
 | **T2** | 5 concurrent (`bench.js`) | 10 | 50 | 50 / 50 | **[FILL IN] ms** | **[FILL IN] ms** | **[FILL IN] req/s** |
 | **T3** | 20 concurrent (`bench.js`) | 10 | 200 | **[FILL IN] / 200** | **[FILL IN] ms** | **[FILL IN] ms** | **[FILL IN] req/s** |
 
-> ⚠️ **To complete this table**: fill in the real numbers from `benchmark-evidence.md`.
 
 ### Interpretation
 
@@ -351,7 +349,6 @@ Render's free tier puts the service to sleep after 15 minutes of inactivity. The
 
 - **26 test cases** covering functional requirements (FR1–FR3), non-functional requirements (NFR1–NFR3), coordination, security, fault tolerance, and input validation.
 - **26 pass, 0 fail.**
-- Raw evidence (screenshots, logs, API responses) in [`test-evidence.md`](test-evidence.md).
 - Test execution is also demonstrated in the demo video (minutes 3:00 – 9:00).
 - Benchmark results in Section (e).
 
@@ -392,7 +389,6 @@ All tests were executed against the live deployment at `https://findit-lost-foun
 
 Test execution date: **[FILL IN: e.g. 2025-11-24]**  
 Environment: Render free tier, Chrome 131, Windows 11  
-Evidence: see demo video and `test-evidence.md`
 
 ### Deliverables in this repository
 
@@ -406,7 +402,7 @@ Evidence: see demo video and `test-evidence.md`
 | Test evidence | `test-evidence.md` |
 | Deployment config | `render.yaml`, `Dockerfile`, `docker-compose.yml` |
 | Database schema | `src/schema.sql` |
-| Demo video | _[link to be added]_ |
+
 
 ### Demo video outline (recorded walkthrough, ≤ 15 min)
 
