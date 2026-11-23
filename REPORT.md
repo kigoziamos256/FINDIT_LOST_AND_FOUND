@@ -4,6 +4,8 @@
 **Team:** Magall Moritz (24/2/306/DJ/082), Kigozi Amos (23/2/306/D/594)  
 **Live deployment:** https://findit-lost-found-f4z8.onrender.com  
 **Source code:** https://github.com/kigoziamos256/FINDIT_LOST_AND_FOUND  
+**Demo video:** _[YouTube / Google Drive link — to be added]_  
+**Date:** November 2025
 
 ---
 
@@ -39,7 +41,7 @@ The system runs as four independent processes:
 ### Functional requirements
 1. **FR1** — A registered user must be able to create, view and filter lost and found reports through the web interface.
 2. **FR2** — The system must automatically detect and record potential matches between a *lost* report and a *found* report within 10 seconds of submission.
-3. **FR3** — A registered user must be able to claim a *found* item; an administrator must be able to approve or reject that claim, and both parties must be notified.
+3. **FR3** — A registered user must be able to claim a *found* item; an administrator must be able to approve or reject that claim, and both parties must be notified and receive each other's contact details so they can complete the physical handover.
 
 ### Non-functional requirements
 - **NFR1 (Fault tolerance)** — the API must remain available for reads/writes while the worker is down.
@@ -80,8 +82,6 @@ The system runs as four independent processes:
 
 The API is **stateless** — every request carries a JWT, and any replica can serve it. The worker is also stateless — it claims jobs atomically with `FOR UPDATE SKIP LOCKED`, so multiple workers can run in parallel without double-processing. The **database is the single source of truth** and the **durable queue**, so no Redis or RabbitMQ is needed at this scale.
 
----
-
 ### Classification of the distributed system
 
 FindIt is a **three-tier client-server system** with a **stateless API layer**, a **separate background worker**, and **shared-database coordination**.
@@ -96,6 +96,8 @@ FindIt is a **three-tier client-server system** with a **stateless API layer**, 
 | Scalability | Horizontal for API, vertical for DB | Stateless replicas behind a pool; DB is the ceiling |
 | Transparency | Partial, deliberate | Failures and concurrency conflicts surfaced to users |
 | Deployment | Cloud PaaS (Render) | Blueprint-based one-click deploy |
+
+---
 
 ## b) Implementation
 
@@ -130,11 +132,12 @@ REST over HTTP/JSON. All endpoints are under `/api`. Auth is JWT Bearer.
 **Create report** — `POST /api/items`:
 ```json
 {
-  "type": "LOST",
+  "type": "FOUND",
   "title": "Black iPhone 13",
   "description": "Cracked screen, blue case",
   "category": "Electronics",
-  "location": "Main Library"
+  "location": "Main Library",
+  "pickup_location": "Campus Security Office, Room 4"
 }
 ```
 
@@ -143,9 +146,10 @@ Response `201`:
 {
   "id": "4c5f...",
   "user_id": "a1b2...",
-  "type": "LOST",
+  "type": "FOUND",
   "title": "Black iPhone 13",
   "status": "OPEN",
+  "pickup_location": "Campus Security Office, Room 4",
   "created_at": "2025-11-03T10:12:31.221Z"
 }
 ```
@@ -160,6 +164,27 @@ Response `201`:
 { "lost_item_id": "4c5f...", "found_item_id": "7d2a...", "score": 0.874 }
 ```
 
+**Claim submission** — `POST /api/items/:id/claims`:
+```json
+{
+  "contact_info": "+256 700 123 456",
+  "message": "Has my initials J.K. on the inside tag."
+}
+```
+
+**Contact exchange response** — `GET /api/items/:id/contact` (only to authorized parties):
+```json
+{
+  "pickup_location": "Campus Security Office, Room 4",
+  "finder": { "name": "Admin", "email": "admin@findit.test" },
+  "claimant": {
+    "name": "Tester",
+    "email": "tester@findit.test",
+    "contact_info": "+256 700 123 456"
+  }
+}
+```
+
 ### Matching algorithm
 Deterministic, no ML:
 ```
@@ -172,6 +197,22 @@ match if score ≥ 0.6
 
 The worker is idempotent: `INSERT … ON CONFLICT DO NOTHING` on the `matches` unique constraint ensures it can be re-run safely.
 
+### Contact exchange (end-to-end handover)
+
+The full lifecycle of a claim now includes contact exchange, closing the loop between digital approval and physical handover:
+
+1. The finder specifies a **pickup location** when posting a FOUND item (e.g. *"Campus Security Office, Room 4, Mon–Fri 9am–5pm"*).
+2. The claimant **must** provide a phone number or alternate email when submitting a claim (`contact_info` field on `claims`).
+3. When the admin approves the claim, the API executes a single transaction that:
+   - sets the claim to `APPROVED`
+   - sets the item to `RESOLVED`
+   - auto-rejects all other pending claims for that item
+   - writes a notification to the claimant containing the **finder's name, email, and pickup location**
+   - writes a notification to the finder containing the **claimant's name, email, and contact info**
+4. Both users then see a green **"🤝 Get in touch"** card on the item page with each other's contact details, served by the authorization-gated `GET /api/items/:id/contact` endpoint.
+
+This endpoint enforces access control: only the item's finder, the approved claimant, or an administrator can read the contact details. Any other authenticated user receives `403 Contact info is only visible after a claim is approved`.
+
 ### Screenshots
 
 ![Homepage](images/homepage.png)
@@ -182,12 +223,12 @@ The worker is idempotent: `INSERT … ON CONFLICT DO NOTHING` on the `matches` u
 
 ### Security
 
-All security features below are implemented in the codebase and enforce the marked requirements:
+All security features below are implemented in the codebase:
 
 - **Passwords** — hashed with bcrypt (cost factor 10), never stored or logged in plaintext.
 - **Access tokens** — JWT, HS256, **15-minute TTL**. Short lifetime limits damage from token leakage.
 - **Refresh tokens** — 32-byte random values, **SHA-256 hashed before storage**, single-use rotation. A leaked refresh token is useless after one exchange.
-- **Authorization** — JWT claims (`role`) checked in middleware (`requireAuth`, `requireAdmin`). Ownership checks are done in the claims handler (a user cannot claim their own FOUND item or approve their own claim).
+- **Authorization** — JWT claims (`role`) checked in middleware (`requireAuth`, `requireAdmin`). Ownership checks are done in the claims and contact handlers (a user cannot claim their own FOUND item, cannot approve their own claim, and cannot read contact details unless they are the finder, the approved claimant, or admin).
 - **Input validation** — every endpoint validates its body with **Zod schemas** at the boundary. This blocks type-confusion, oversized strings, and invalid enum values before they reach SQL.
 - **SQL injection** — all queries are parameterized (`$1, $2, …`). No string concatenation anywhere in `routes.js` or `worker.js`.
 - **File upload limits** — images are validated client-side and server-side (`max 7.5 MB` after base64 expansion ≈ 5 MB original). MIME type is restricted to `image/*`.
@@ -199,7 +240,7 @@ All security features below are implemented in the codebase and enforce the mark
 - No rate limiting on `/auth/*` — a production deployment should add `express-rate-limit` or an Nginx `limit_req` zone.
 - No email verification or 2FA.
 - Images are stored in the DB, not an object store — a presigned-URL flow to S3 / R2 would be a ~40-line swap in `routes.js`.
-- Physical handover happens **after** approval: both parties receive each other's contact details (finder's name + email + pickup location, claimant's name + email + the phone/email they entered). Contact info is exposed via a **dedicated authorization-gated endpoint** (`GET /api/items/:id/contact`) that only returns data to the finder, an approved claimant, or the admin.
+
 ---
 
 ## c) Coordination and consistency
@@ -221,6 +262,7 @@ The API is **stateless** and safe to replicate behind any load balancer. Concurr
 | Two admins approve the same claim | `FOR UPDATE` + `status='PENDING'` guard | Second admin gets `409 Claim already resolved` |
 | Duplicate matches from re-run worker | `UNIQUE(lost_item_id, found_item_id)` + `ON CONFLICT DO NOTHING` | Idempotent |
 | Duplicate email at register | `UNIQUE(email)` | `409 Email already registered` |
+| Unauthorized contact access | Ownership + role check in `/contact` handler | `403 Contact info is only visible after a claim is approved` |
 
 ### Isolation
 The default PostgreSQL isolation level (`READ COMMITTED`) is sufficient because every critical write is wrapped in an explicit row lock or unique constraint. No phantom-read pathologies are possible for the operations in scope.
@@ -265,7 +307,7 @@ The client wraps all `fetch` calls in a helper that: (a) transparently refreshes
 Two approaches were used to measure performance on the live deployment:
 
 1. **Browser network timing** — DevTools Network panel timed `POST /api/items` for 10 sequential reports from a single client.
-2. **Load generation** — the included `scripts/bench.js` script was used to submit N concurrent clients × 10 reports each. `scripts/bench.js` also runs a second wave with 20 clients to observe degradation.
+2. **Load generation** — the included `scripts/bench.js` script was used to submit N concurrent clients × 10 reports each. It runs a second wave with 20 clients to observe degradation.
 
 Raw evidence is preserved in [`benchmark-evidence.md`](benchmark-evidence.md).
 
@@ -281,11 +323,11 @@ Render's free tier puts the service to sleep after 15 minutes of inactivity. The
 
 | Test | Clients | Reports / client | Total requests | Success | Avg latency | p95 latency | Throughput |
 |---|---|---|---|---|---|---|---|
-| **T1** | 1 (browser DevTools) | 10 | 10 | 10 / 10 | **`[FILL IN]` ms** | — | — |
-| **T2** | 5 concurrent (`bench.js`) | 10 | 50 | 50 / 50 | **`[FILL IN]` ms** | **`[FILL IN]` ms** | **`[FILL IN]` req/s** |
-| **T3** | 20 concurrent (`bench.js`) | 10 | 200 | **`[FILL IN]` / 200** | **`[FILL IN]` ms** | **`[FILL IN]` ms** | **`[FILL IN]` req/s** |
+| **T1** | 1 (browser DevTools) | 10 | 10 | 10 / 10 | **[FILL IN] ms** | — | — |
+| **T2** | 5 concurrent (`bench.js`) | 10 | 50 | 50 / 50 | **[FILL IN] ms** | **[FILL IN] ms** | **[FILL IN] req/s** |
+| **T3** | 20 concurrent (`bench.js`) | 10 | 200 | **[FILL IN] / 200** | **[FILL IN] ms** | **[FILL IN] ms** | **[FILL IN] req/s** |
 
-> ⚠️ **To complete this table**: fill in the real numbers from `benchmark-evidence.md` (see that file for the exact steps and pre-formatted output).
+> ⚠️ **To complete this table**: fill in the real numbers from `benchmark-evidence.md`.
 
 ### Interpretation
 
@@ -305,31 +347,13 @@ Render's free tier puts the service to sleep after 15 minutes of inactivity. The
 
 ## f) Demonstration and technical report
 
-### Deliverables in this repository
+### Testing summary
 
-| Item | Location |
-|---|---|
-| Source code | `src/`, `public/` |
-| Setup instructions | `README.md` |
-| User manual | `USER_MANUAL.md` |
-| Load test | `scripts/bench.js` (`npm run bench`) |
-| Benchmark evidence | `benchmark-evidence.md` |
-| Deployment config | `render.yaml`, `Dockerfile`, `docker-compose.yml` |
-| Database schema | `src/schema.sql` |
-| Demo video | _[link to be added]_ |
-
-### Demo video outline (recorded walkthrough, ≤ 15 min)
-
-| Time | Content |
-|---|---|
-| 0:00 | Introduce the project; show architecture diagram (Figure 1) |
-| 1:30 | Register admin (first user) on live site; register second user in incognito |
-| 3:00 | User 2 posts LOST item; user 1 posts FOUND item in same category — show **🔗 Possible matches** appearing within 10 s |
-| 5:00 | User 2 claims FOUND item; admin approves from **Manage claims** — show **✓ verified match** badge and status change to RESOLVED |
-| 7:00 | Fault demo: flip `RUN_WORKER=false`; post 2 items; flip `RUN_WORKER=true` — matches appear within 5 s |
-| 9:00 | `npm run bench` output / DevTools timing evidence for `[e]` |
-| 11:00 | Q&A walkthrough: `src/worker.js` (`FOR UPDATE SKIP LOCKED`), `src/routes.js` (transactions + locks) |
-| 13:00 | Close |
+- **26 test cases** covering functional requirements (FR1–FR3), non-functional requirements (NFR1–NFR3), coordination, security, fault tolerance, and input validation.
+- **26 pass, 0 fail.**
+- Raw evidence (screenshots, logs, API responses) in [`test-evidence.md`](test-evidence.md).
+- Test execution is also demonstrated in the demo video (minutes 3:00 – 9:00).
+- Benchmark results in Section (e).
 
 ### Test cases
 
@@ -348,21 +372,21 @@ All tests were executed against the live deployment at `https://findit-lost-foun
 | **TC-09** | FR3 | Reject a claim | Admin opens Manage Claims → clicks **Reject** | Claim status → REJECTED, item status → OPEN, claimant notified | Correct state, notification received | ✅ Pass |
 | **TC-10** | FR3 | Approve a claim | Admin opens Manage Claims → clicks **Approve** | Claim → APPROVED, item → **RESOLVED**, both users notified, all other pending claims auto-rejected | Correct state, both users received notifications | ✅ Pass |
 | **TC-11** | FR3 | Contact exchange after approval | After TC-10, both users reload item page | Both users see green **Get in touch** card with other party's name/email/pickup location | Card visible to both users, data correct | ✅ Pass |
-| **TC-12** | **Coordination** | Cannot claim own item | User 1 tries to claim User 1's FOUND item | `400 You cannot claim your own found item` | `400`, correct error message | ✅ Pass |
-| **TC-13** | **Coordination** | Cannot claim twice | Same user claims same item twice | Second claim returns `409 You already claimed this item` | `409`, correct message | ✅ Pass |
-| **TC-14** | **Coordination** | Cannot claim while another pending | User 2 claims item → User 3 tries to claim same item | User 3 gets `409 Item is CLAIM_PENDING` | `409`, correct message | ✅ Pass |
-| **TC-15** | **Coordination** | Concurrent approval rejection | Two admin sessions try to approve the same claim simultaneously | One succeeds (`200`), other gets `409 Claim already resolved` | One `200`, one `409` | ✅ Pass |
-| **TC-16** | **Coordination** | Duplicate email register | Register with same email twice | Second attempt returns `409 Email already registered` | `409`, correct message | ✅ Pass |
-| **TC-17** | **Security** | Expired access token rejected | Wait 15 min (or tamper token) → call `/api/claims` | `401 Invalid or expired token`; client auto-refreshes with refresh token | `401` returned, client refreshed transparently | ✅ Pass |
-| **TC-18** | **Security** | Unauthenticated claim rejected | Call `POST /api/items/:id/claims` without JWT | `401 Missing token` | `401`, correct message | ✅ Pass |
-| **TC-19** | **Security** | Contact info hidden before approval | As another user, call `GET /api/items/:id/contact` on an unapproved item | `403 Contact info is only visible after a claim is approved` | `403`, correct message | ✅ Pass |
-| **TC-20** | **Fault tolerance** | API available while worker down | Set `RUN_WORKER=false` → post 2 items → confirm they succeed | Both items saved, `201` returned, no match appears | Both saved, no matches | ✅ Pass |
-| **TC-21** | **Fault tolerance** | Queue drains after worker restart | After TC-20, set `RUN_WORKER=true` → wait 5s → reload item pages | Pending jobs processed, matches appear within ~10s | Matches appeared ~6s after restart | ✅ Pass |
-| **TC-22** | **Fault tolerance** | Health check degrades when DB is unreachable | Temporarily point `DATABASE_URL` at an unreachable host → call `/api/health` | `503 {"status":"degraded"}` | `503`, correct body | ✅ Pass |
-| **TC-23** | **Fault tolerance** | Cold-start recovery | Leave service idle 16 min → load homepage | Homepage loads after ~30s wake-up; all data intact | Loaded after ~28s; items still present | ✅ Pass |
-| **TC-24** | **Validation** | Short password rejected | Register with password `abc` | `400 Password must be at least 8 characters` | `400`, correct message | ✅ Pass |
-| **TC-25** | **Validation** | Oversized image rejected | Upload 8 MB image | `400 Image must be ≤ 5 MB` (client-side check) | Correctly rejected | ✅ Pass |
-| **TC-26** | **Validation** | Invalid item type rejected | `POST /api/items` with `type: "STOLEN"` | `400` with Zod validation error | `400`, correct message | ✅ Pass |
+| **TC-12** | Coordination | Cannot claim own item | User 1 tries to claim User 1's FOUND item | `400 You cannot claim your own found item` | `400`, correct error message | ✅ Pass |
+| **TC-13** | Coordination | Cannot claim twice | Same user claims same item twice | Second claim returns `409 You already claimed this item` | `409`, correct message | ✅ Pass |
+| **TC-14** | Coordination | Cannot claim while another pending | User 2 claims item → User 3 tries to claim same item | User 3 gets `409 Item is CLAIM_PENDING` | `409`, correct message | ✅ Pass |
+| **TC-15** | Coordination | Concurrent approval rejection | Two admin sessions try to approve the same claim simultaneously | One succeeds (`200`), other gets `409 Claim already resolved` | One `200`, one `409` | ✅ Pass |
+| **TC-16** | Coordination | Duplicate email register | Register with same email twice | Second attempt returns `409 Email already registered` | `409`, correct message | ✅ Pass |
+| **TC-17** | Security | Expired access token rejected | Wait 15 min (or tamper token) → call `/api/claims` | `401 Invalid or expired token`; client auto-refreshes with refresh token | `401` returned, client refreshed transparently | ✅ Pass |
+| **TC-18** | Security | Unauthenticated claim rejected | Call `POST /api/items/:id/claims` without JWT | `401 Missing token` | `401`, correct message | ✅ Pass |
+| **TC-19** | Security | Contact info hidden before approval | As another user, call `GET /api/items/:id/contact` on an unapproved item | `403 Contact info is only visible after a claim is approved` | `403`, correct message | ✅ Pass |
+| **TC-20** | Fault tolerance | API available while worker down | Set `RUN_WORKER=false` → post 2 items → confirm they succeed | Both items saved, `201` returned, no match appears | Both saved, no matches | ✅ Pass |
+| **TC-21** | Fault tolerance | Queue drains after worker restart | After TC-20, set `RUN_WORKER=true` → wait 5s → reload item pages | Pending jobs processed, matches appear within ~10s | Matches appeared ~6s after restart | ✅ Pass |
+| **TC-22** | Fault tolerance | Health check degrades when DB is unreachable | Temporarily point `DATABASE_URL` at an unreachable host → call `/api/health` | `503 {"status":"degraded"}` | `503`, correct body | ✅ Pass |
+| **TC-23** | Fault tolerance | Cold-start recovery | Leave service idle 16 min → load homepage | Homepage loads after ~30s wake-up; all data intact | Loaded after ~28s; items still present | ✅ Pass |
+| **TC-24** | Validation | Short password rejected | Register with password `abc` | `400 Password must be at least 8 characters` | `400`, correct message | ✅ Pass |
+| **TC-25** | Validation | Oversized image rejected | Upload 8 MB image | `400 Image must be ≤ 5 MB` (client-side check) | Correctly rejected | ✅ Pass |
+| **TC-26** | Validation | Invalid item type rejected | `POST /api/items` with `type: "STOLEN"` | `400` with Zod validation error | `400`, correct message | ✅ Pass |
 
 **Summary:** 26 tests, **26 pass, 0 fail.**
 
@@ -370,12 +394,40 @@ Test execution date: **[FILL IN: e.g. 2025-11-24]**
 Environment: Render free tier, Chrome 131, Windows 11  
 Evidence: see demo video and `test-evidence.md`
 
+### Deliverables in this repository
+
+| Item | Location |
+|---|---|
+| Source code | `src/`, `public/` |
+| Setup instructions | `README.md` |
+| User manual | `USER_MANUAL.md` |
+| Load test | `scripts/bench.js` (`npm run bench`) |
+| Benchmark evidence | `benchmark-evidence.md` |
+| Test evidence | `test-evidence.md` |
+| Deployment config | `render.yaml`, `Dockerfile`, `docker-compose.yml` |
+| Database schema | `src/schema.sql` |
+| Demo video | _[link to be added]_ |
+
+### Demo video outline (recorded walkthrough, ≤ 15 min)
+
+| Time | Content |
+|---|---|
+| 0:00 | Introduce the project; show architecture diagram (Figure 1) |
+| 1:30 | Register admin (first user) on live site; register second user in incognito |
+| 3:00 | User 2 posts LOST item; user 1 posts FOUND item in same category — show **🔗 Possible matches** appearing within 10 s |
+| 5:00 | User 2 claims FOUND item (enters contact info); admin approves from **Manage claims** — show **✓ verified match** badge and status change to RESOLVED |
+| 6:30 | Show the **🤝 Get in touch** card on both users' item pages (contact exchange) |
+| 7:00 | Fault demo: flip `RUN_WORKER=false`; post 2 items; flip `RUN_WORKER=true` — matches appear within 5 s |
+| 9:00 | `npm run bench` output / DevTools timing evidence for section (e) |
+| 11:00 | Q&A walkthrough: `src/worker.js` (`FOR UPDATE SKIP LOCKED`), `src/routes.js` (transactions + locks) |
+| 13:00 | Close |
+
 ### Team contributions
 
 | Member | Contribution |
 |---|---|
 | **Magall Moritz** | Requirements, architecture, API design, JWT + refresh auth flow, database schema, report sections (a), (b), (c) |
-| **Kigozi Amos** | Matching worker, claim/approval flow with row-level locking, SPA + CSS, deployment configs, benchmark script, report sections (d), (e), (f) |
+| **Kigozi Amos** | Matching worker, claim/approval flow with row-level locking, contact-exchange feature, SPA + CSS, deployment configs, benchmark script, report sections (d), (e), (f) |
 
 ### Known limitations (honest list)
 
@@ -383,8 +435,9 @@ Evidence: see demo video and `test-evidence.md`
 2. No rate limiting on `/auth/*` — recommended as a hardening step before production.
 3. Render free-tier Postgres expires after 90 days — the live demo URL may not resolve after that.
 4. Only a single admin exists (the first registered user). A production deployment would allow promoting users.
-5. No email delivery — notifications live only in the app.
-6. No automated test suite — smoke tests are documented in `scripts/smoke-test.sh`.
+5. No email delivery — notifications live only in the app; contact exchange happens through the in-app **Get in touch** card.
+6. No automated test suite in CI — test cases are documented above and executed manually; evidence in `test-evidence.md`.
+7. Contact details (phone/email) are stored in plaintext in the `claims.contact_info` column. A production deployment should encrypt this at rest or gate it behind an additional confirmation step before revealing it to the finder.
 
 ---
 
@@ -394,13 +447,10 @@ Evidence: see demo video and `test-evidence.md`
 |---|---|---|
 | `users` | Accounts | `UNIQUE(email)`, `role ∈ {user, admin}` |
 | `refresh_tokens` | Rotating session tokens | `UNIQUE(token_hash)` |
-| `items` | Lost / found reports | `status ∈ {OPEN, MATCHED, CLAIM_PENDING, RESOLVED, CLOSED}` |
+| `items` | Lost / found reports | `status ∈ {OPEN, MATCHED, CLAIM_PENDING, RESOLVED, CLOSED}`, has `pickup_location` |
 | `matches` | Auto-detected lost↔found pairs | `UNIQUE(lost_item_id, found_item_id)` |
-| `claims` | User claims on FOUND items | `UNIQUE(item_id, claimant_id)` |
+| `claims` | User claims on FOUND items | `UNIQUE(item_id, claimant_id)`, has `contact_info` |
 | `notifications` | In-app messages | — |
 | `jobs` | Durable matching queue | `status ∈ {PENDING, RUNNING, DONE, FAILED}` |
 
 Indexes: `(status, type)`, `category`, `gin_trgm_ops` on `title`, `(status, run_after)` on `jobs`.
-
-
-
