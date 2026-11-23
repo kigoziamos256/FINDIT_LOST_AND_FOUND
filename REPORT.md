@@ -83,6 +83,21 @@ The API is **stateless** — every request carries a JWT, and any replica can se
 
 ---
 
+### Classification of the distributed system
+
+FindIt is a **three-tier client-server system** with a **stateless API layer**, a **separate background worker**, and **shared-database coordination**.
+
+| Dimension | Classification | Justification |
+|---|---|---|
+| Architecture | Three-tier client-server | Presentation, Application, Data tiers |
+| Process model | Multi-process, loosely coupled | 4 independent processes with separate lifecycles |
+| Communication | Sync request-response + async message passing | HTTPS/JSON for clients; durable queue for worker |
+| Coordination | Shared-database (pessimistic + optimistic locking) | No consensus protocol needed at this scale |
+| Consistency | Strong within the single Postgres instance | `READ COMMITTED` + `FOR UPDATE` for critical writes |
+| Scalability | Horizontal for API, vertical for DB | Stateless replicas behind a pool; DB is the ceiling |
+| Transparency | Partial, deliberate | Failures and concurrency conflicts surfaced to users |
+| Deployment | Cloud PaaS (Render) | Blueprint-based one-click deploy |
+
 ## b) Implementation
 
 The prototype is a single Node.js codebase with two entrypoints (`npm start` = API, `npm run worker` = worker). Both share the same `pg` pool module in `src/db.js`.
